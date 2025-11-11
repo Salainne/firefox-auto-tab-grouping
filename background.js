@@ -8,6 +8,7 @@ let isEnabled = true;
 let ignorePinnedTabs = true; // Default: don't group pinned tabs
 let tabPlacement = 'last'; // Default: place new tabs at the end of the group ('first' or 'last')
 let initialized = false;
+let autogroupcreate = false; // Default: don't auto create groups
 
 // TOP-LEVEL EVENT LISTENERS (Required by Firefox)
 // These must be registered synchronously at the top level
@@ -52,7 +53,7 @@ browser.tabGroups.onRemoved.addListener((group) => {
         console.log(`Removed group from window ${windowId} tracking:`, groupId);
         
         // Clean up empty window entries
-        if (windowGroups.size === 0) {
+          if (windowGroups.size === 0) {
           activeGroups.delete(windowId);
         }
         return; // Found and removed, exit
@@ -158,7 +159,7 @@ function matchesPattern(url, pattern, patternType = 'simple') {
 
 async function loadConfig() {
   try {
-    const result = await browser.storage.local.get(['groupDefinitions', 'patternRules', 'isEnabled', 'ignorePinnedTabs', 'tabPlacement']);
+    const result = await browser.storage.local.get(['groupDefinitions', 'patternRules', 'isEnabled', 'ignorePinnedTabs', 'tabPlacement', 'autogroupcreate']);
     
     if (result.groupDefinitions) {
       groupDefinitions = new Map(Object.entries(result.groupDefinitions));
@@ -190,6 +191,10 @@ async function loadConfig() {
     if (result.ignorePinnedTabs !== undefined) {
       ignorePinnedTabs = result.ignorePinnedTabs;
     }
+
+      if (result.autogroupcreate !== undefined) {
+          autogroupcreate = result.autogroupcreate;
+      }
     
     if (result.tabPlacement !== undefined) {
       tabPlacement = result.tabPlacement;
@@ -200,7 +205,8 @@ async function loadConfig() {
       ruleCount: patternRules.size, 
       isEnabled,
       ignorePinnedTabs,
-      tabPlacement
+        tabPlacement,
+        autogroupcreate
     });
   } catch (error) {
     console.error('Error loading config:', error);
@@ -217,7 +223,8 @@ async function saveConfig() {
       patternRules: patternRulesObj,
       isEnabled: isEnabled,
       ignorePinnedTabs: ignorePinnedTabs,
-      tabPlacement: tabPlacement
+      tabPlacement: tabPlacement,
+        autogroupcreate: autogroupcreate
     });
     console.log('Configuration saved');
   } catch (error) {
@@ -287,7 +294,80 @@ async function scanExistingGroups() {
   }
 }
 
+
+//-- auto tab grouping logic --//
+const colourlist = [
+    "blue",
+    "red",
+    "yellow",
+    "green",
+    "pink",
+    "purple",
+    "cyan",
+    "orange"
+];
+async function autoCreateGroupsAndRules(tab) {
+    try {
+        // Generate unique group ID
+        const groupId = `group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        var groupName = extractHostname(tab.url);
+        if (groupName === null || groupName.length === 0) {
+            // did not work for some reason..
+            return;
+        }
+
+        // Generate pattern from URL
+        //var pattern = extractUrlPattern(tab.url);
+        var pattern = groupName;
+
+        // Choose a color
+        var colourIndex = Math.floor(Math.random() * 8);
+        var selectedColor = colourlist[colourIndex];
+        addGroupDefinition(
+            groupId,
+            groupName,
+            selectedColor
+        ).then(() => {
+            console.log('created tab:', tab.url);
+            addPatternRule(
+                pattern,
+                groupId,
+                'simple'
+            ).then(() => {
+                console.log('created rule with pattern:', pattern);
+            }).catch(error => {
+                console.error('Error adding rule:', error);
+                throw error;
+            });
+        }).catch(error => {
+            console.error('Error adding group:', error);
+            throw error;
+        });
+
+    } catch (error) {
+        console.error('autoGroupTab failed with:', error);
+    }
+}
+//--
+
 // CORE FUNCTIONALITY
+
+function getPattern(tab) {
+    let matchingPattern = null;
+    let groupId = null;
+    for (const [pattern, ruleData] of patternRules.entries()) {
+        if (matchesPattern(tab.url, pattern, ruleData.type)) {
+            matchingPattern = pattern;
+            groupId = ruleData.groupId;
+            break;
+        }
+    }
+    if (groupId) {
+        return { matchingPattern, groupId };
+    }
+    return null;
+}
 
 async function handleTabChange(tab) {
   if (!tab.url || tab.url.startsWith('about:') || tab.url.startsWith('moz-extension:')) {
@@ -305,24 +385,43 @@ async function handleTabChange(tab) {
   let groupId = null;
   
   // Check all patterns to find a match
-  for (const [pattern, ruleData] of patternRules.entries()) {
-    if (matchesPattern(tab.url, pattern, ruleData.type)) {
-      matchingPattern = pattern;
-      groupId = ruleData.groupId;
-      break;
-    }
-  }
+  //for (const [pattern, ruleData] of patternRules.entries()) {
+  //  if (matchesPattern(tab.url, pattern, ruleData.type)) {
+  //    matchingPattern = pattern;
+  //    groupId = ruleData.groupId;
+  //    break;
+  //  }
+    //}
+    var result = getPattern(tab);
+    groupId = result ? result.groupId : null;
+    matchingPattern = result ? result.matchingPattern : null;
   
   if (!groupId) {
     // No pattern rule found - ungroup the tab if it's in a group
-    if (tab.groupId !== -1) {
-      try {
-        await browser.tabs.ungroup([tab.id]);
-      } catch (error) {
-        console.error('Error ungrouping tab:', error);
+      if (tab.groupId !== -1) {
+          try {
+              await browser.tabs.ungroup([tab.id]);
+          } catch (error) {
+              console.error('Error ungrouping tab:', error);
+          }
       }
-    }
-    return;
+
+      if (autogroupcreate) {
+          if (!initialized) {
+              return;
+          }
+          //console.log('Skipping pinned tab:', tab.url);
+          console.log('Create group for url: ', tab.url);
+          await autoCreateGroupsAndRules(tab);
+          result = getPattern(tab);
+          groupId = result ? result.groupId : null;
+          matchingPattern = result ? result.matchingPattern : null;
+          if (!groupId) {
+              return;
+          }
+      } else {
+          return;
+      }
   }
 
   // Get the group definition
@@ -461,6 +560,15 @@ async function toggleIgnorePinnedTabs() {
   }
   return ignorePinnedTabs;
 }
+
+
+async function toggleautogroupcreate() {
+    autogroupcreate = !autogroupcreate;
+    await saveConfig();
+
+    return autogroupcreate;
+}
+
 
 async function setTabPlacement(placement) {
   if (placement !== 'first' && placement !== 'last') {
@@ -739,6 +847,15 @@ function handleMessage(message, sender, sendResponse) {
         sendResponse({ error: error.message });
       });
       return true; // Keep message channel open for async response
+
+      case 'toggleautogroupcreate':
+          toggleautogroupcreate().then(autogroupcreate => {
+              sendResponse({ autogroupcreate });
+          }).catch(error => {
+              console.error('Error toggling autogroupcreate state:', error);
+              sendResponse({ error: error.message });
+          });
+          return true; // Keep message channel open for async responsev
       
     case 'toggleIgnorePinnedTabs':
       toggleIgnorePinnedTabs().then(ignorePinnedTabs => {
@@ -785,7 +902,8 @@ function handleMessage(message, sender, sendResponse) {
           configs: getGroupConfigs(),
           groups: getGroupDefinitions(),
           rules: getPatternRules(),
-          initialized: initialized
+        initialized: initialized,
+        autogroupcreate: autogroupcreate
         });
       } catch (error) {
         console.error('Error getting status:', error);

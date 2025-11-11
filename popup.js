@@ -5,6 +5,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const toggleBtn = document.getElementById('toggleBtn');
   const regroupBtn = document.getElementById('regroupBtn');
   const ungroupBtn = document.getElementById('ungroupBtn');
+
+    // auto create groups toggle elements
+    const autogroupcreateIndicator = document.getElementById('autogroupcreateIndicator');
+    const autogroupcreatestatusText = document.getElementById('autogroupcreatestatusText');
+    const toggleautogroupcreateBtn = document.getElementById('toggleautogroupcreateBtn');
   
   // Pinned tabs toggle elements
   const pinnedTabsIndicator = document.getElementById('pinnedTabsIndicator');
@@ -276,6 +281,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     toggleBtn.disabled = false;
   });
 
+    // toggleautogroupcreateBtn functionality
+    toggleautogroupcreateBtn.addEventListener('click', async () => {
+        toggleautogroupcreateBtn.disabled = true;
+        try {
+            const response = await sendMessage({ action: 'toggleautogroupcreate' });
+            await updateStatus();
+        } catch (error) {
+            console.error('Error toggling toggleautogroupcreateBtn:', error);
+        }
+        toggleautogroupcreateBtn.disabled = false;
+    });
+
   // Pinned tabs toggle functionality
   pinnedTabsToggleBtn.addEventListener('click', async () => {
     pinnedTabsToggleBtn.disabled = true;
@@ -365,7 +382,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function updateStatus() {
     try {
       const response = await sendMessage({ action: 'getStatus' });
-      const isEnabled = response.enabled;
+        const isEnabled = response.enabled;
+
+        const autogroupcreate = response.autogroupcreate;
+
       const ignorePinnedTabs = response.ignorePinnedTabs;
       const tabPlacement = response.tabPlacement || 'last';
       currentGroups = response.groups || [];
@@ -374,6 +394,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusIndicator.className = `status-indicator ${isEnabled ? 'enabled' : 'disabled'}`;
       statusText.textContent = isEnabled ? 'Auto-grouping enabled' : 'Auto-grouping disabled';
       toggleBtn.textContent = isEnabled ? 'Disable' : 'Enable';
+
+        autogroupcreateIndicator.className = `status-indicator ${autogroupcreate ? 'enabled' : 'disabled'}`;
+        autogroupcreatestatusText.textContent = autogroupcreate ? 'Auto group create enabled' : 'Auto group create disabled';
+        toggleautogroupcreateBtn.textContent = autogroupcreate ? 'Disable' : 'Enable';
       
       // Update pinned tabs status
       pinnedTabsIndicator.className = `status-indicator ${ignorePinnedTabs ? 'enabled' : 'disabled'}`;
